@@ -1,4 +1,4 @@
-package parallels
+package parallelsgo
 
 import (
 	"context"
