@@ -17,8 +17,9 @@ type Parallels struct {
 	errOnce sync.Once
 
 	workerOnce sync.Once
-	ch         chan func(ctx context.Context) error
-	chs        []func(ctx context.Context) error
+	ch         chan *Paralels_Func // func(ctx context.Context) error
+
+	chs []*Paralels_Func //func(ctx context.Context) error
 
 	ctx    context.Context
 	cancel func()
@@ -41,7 +42,7 @@ func WithCancel(ctx context.Context) *Parallels {
 	return &Parallels{ctx: ctx, cancel: cancel}
 }
 
-func (g *Parallels) do(f func(ctx context.Context) error) {
+func (g *Parallels) do(pf *Paralels_Func) {
 	ctx := g.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -63,7 +64,7 @@ func (g *Parallels) do(f func(ctx context.Context) error) {
 		}
 		g.wg.Done()
 	}()
-	err = f(ctx)
+	err = pf.PFunc(ctx, pf.Args)
 }
 
 // GOMAXPROCS set max goroutine to work.
@@ -72,40 +73,51 @@ func (g *Parallels) GOMAXPROCS(n int) {
 		panic("errParallels: GOMAXPROCS must great than 0")
 	}
 	g.workerOnce.Do(func() {
-		g.ch = make(chan func(context.Context) error, n)
+		g.ch = make(chan *Paralels_Func, n)
 		for i := 0; i < n; i++ {
 			go func() {
-				for f := range g.ch {
-					g.do(f)
+				for pf := range g.ch {
+					g.do(pf)
 				}
 			}()
 		}
 	})
 }
 
-// Go calls the given function in a new goroutine.
-//
-// The first call to return a non-nil error cancels the Parallels; its error will be
-// returned by Wait.
-func (g *Parallels) Go(f func(ctx context.Context) error) {
+func (g *Parallels) Go2(pf *Paralels_Func) {
 	g.wg.Add(1)
 	if g.ch != nil {
 		select {
-		case g.ch <- f:
+		case g.ch <- pf:
 		default:
-			g.chs = append(g.chs, f)
+			g.chs = append(g.chs, pf)
 		}
 		return
 	}
-	go g.do(f)
+	go g.do(pf)
+}
+
+func (g *Parallels) Go(f func(ctx context.Context, args interface{}) error, args interface{}) {
+
+	pf := NewParalels_Func(f, args)
+	g.wg.Add(1)
+	if g.ch != nil {
+		select {
+		case g.ch <- pf:
+		default:
+			g.chs = append(g.chs, pf)
+		}
+		return
+	}
+	go g.do(pf)
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
 // returns the first non-nil error (if any) from them.
 func (g *Parallels) Wait() error {
 	if g.ch != nil {
-		for _, f := range g.chs {
-			g.ch <- f
+		for _, pf := range g.chs {
+			g.ch <- pf
 		}
 	}
 	g.wg.Wait()
